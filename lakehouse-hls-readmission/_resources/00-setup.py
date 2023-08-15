@@ -1,7 +1,8 @@
 # Databricks notebook source
 dbutils.widgets.dropdown("reset_all_data", "false", ["true", "false"], "Reset all data")
 dbutils.widgets.text('catalog', 'dbdemos', 'Catalog')
-dbutils.widgets.text('db', 'hls_patient_readmission', 'Database')
+dbutils.widgets.text('db', 'hls_ml', 'Database')
+dbutils.widgets.text('folder', "/dbdemos/hls_ml/synthea", 'data folder')
 
 # COMMAND ----------
 
@@ -13,11 +14,12 @@ dbutils.widgets.text('db', 'hls_patient_readmission', 'Database')
 #Alternatively, you can run [00-generate-synthea-data]($./00-generate-synthea-data) to generate the data yourself with synthea.
 
 reset_all_data = dbutils.widgets.get("reset_all_data") == "true"
+folder = dbutils.widgets.get("folder")
 import os
 import requests
 import timeit
 import time
-folder = "/dbdemos/hls/synthea"
+# folder = "/dbdemos/hls_ml/synthea"
 
 folders = ["/landing_zone/encounters", "/landing_zone/patients", "/landing_zone/conditions", "/landing_zone/medications", "/landing_zone/immunizations", "/landing_zone/location_ref", "/landing_vocab/CONCEPT", "/landing_vocab/CONCEPT_RELATIONSHIP"]
                                
@@ -192,3 +194,15 @@ class EndpointApiClient:
         print(r.text)
         r.raise_for_status()
       return r.json()
+
+# COMMAND ----------
+
+landed_path = f'dbfs:{folder}/landing_zone'
+
+# COMMAND ----------
+
+dbutils.fs.ls(landed_path)
+
+# COMMAND ----------
+
+
