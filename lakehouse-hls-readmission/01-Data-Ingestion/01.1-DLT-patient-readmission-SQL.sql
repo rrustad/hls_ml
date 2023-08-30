@@ -125,37 +125,38 @@
 
 -- Databricks Auto Loader cloud_files will incrementally load new files, infering the column types and handling schema evolution for us.
 -- data could be from any source: csv, json, parquet...
+-- Riley TODO - make these parameterized
 CREATE OR REFRESH STREAMING LIVE TABLE encounters
   AS SELECT * EXCEPT(START, STOP), to_timestamp(START) as START, to_timestamp(STOP) as STOP
-      FROM cloud_files("/dbdemos/hls/synthea/landing_zone/encounters", "parquet", 
+      FROM cloud_files("s3://one-env-uc-external-location/kp_ml_demo_dev/ingest/encounters", "parquet", 
                                 map("cloudFiles.inferColumnTypes", "true"));
 
 CREATE OR REFRESH STREAMING LIVE TABLE patients
-  AS SELECT * FROM cloud_files("/dbdemos/hls/synthea/landing_zone/patients", "parquet", 
+  AS SELECT * FROM cloud_files("s3://one-env-uc-external-location/kp_ml_demo_dev/ingest/patients", "parquet", 
                                 map("cloudFiles.inferColumnTypes", "true"));
 
 CREATE OR REFRESH STREAMING LIVE TABLE conditions
-  AS SELECT * FROM cloud_files("/dbdemos/hls/synthea/landing_zone/conditions", "parquet", 
+  AS SELECT * FROM cloud_files("s3://one-env-uc-external-location/kp_ml_demo_dev/ingest/conditions", "parquet", 
                                 map("cloudFiles.inferColumnTypes", "true"));
 
 CREATE OR REFRESH STREAMING LIVE TABLE medications
-  AS SELECT * FROM cloud_files("/dbdemos/hls/synthea/landing_zone/medications", "parquet", 
+  AS SELECT * FROM cloud_files("s3://one-env-uc-external-location/kp_ml_demo_dev/ingest/medications", "parquet", 
                                 map("cloudFiles.inferColumnTypes", "true"));
 
 CREATE OR REFRESH STREAMING LIVE TABLE immunizations
-  AS SELECT * FROM cloud_files("/dbdemos/hls/synthea/landing_zone/immunizations", "parquet", 
+  AS SELECT * FROM cloud_files("s3://one-env-uc-external-location/kp_ml_demo_dev/ingest/immunizations", "parquet", 
                                 map("cloudFiles.inferColumnTypes", "true"));
 
 CREATE OR REFRESH STREAMING LIVE TABLE location_ref
-  AS SELECT * FROM cloud_files("/dbdemos/hls/synthea/landing_zone/location_ref", "parquet", 
+  AS SELECT * FROM cloud_files("s3://one-env-uc-external-location/kp_ml_demo_dev/ingest/location_ref", "parquet", 
                                 map("cloudFiles.inferColumnTypes", "true"));
 
 CREATE OR REFRESH STREAMING LIVE TABLE concept
-  AS SELECT * FROM cloud_files("/dbdemos/hls/synthea/landing_vocab/CONCEPT", "parquet", 
+  AS SELECT * FROM cloud_files("s3://one-env-uc-external-location/kp_ml_demo_dev/ingest/CONCEPT", "parquet", 
                                 map("cloudFiles.inferColumnTypes", "true"));
 
 CREATE OR REFRESH STREAMING LIVE TABLE concept_relationship
-  AS SELECT * FROM cloud_files("/dbdemos/hls/synthea/landing_vocab/CONCEPT_RELATIONSHIP", "parquet", 
+  AS SELECT * FROM cloud_files("s3://one-env-uc-external-location/kp_ml_demo_dev/ingest/CONCEPT_RELATIONSHIP", "parquet", 
                                 map("cloudFiles.inferColumnTypes", "true"));
 
 -- COMMAND ----------
@@ -406,6 +407,57 @@ FROM
     UNION ALL
     SELECT * FROM live.op_visits
   );
+
+-- COMMAND ----------
+
+-- MAGIC %md
+-- MAGIC #### visit_occurrence
+
+-- COMMAND ----------
+
+CREATE OR REFRESH LIVE TABLE visit_occurrence
+select
+  av.visit_occurrence_id,
+  p.person_id,
+  case
+    lower(av.encounterclass)
+    when 'ambulatory' then 9202
+    when 'emergency' then 9203
+    when 'inpatient' then 9201
+    when 'wellness' then 9202
+    when 'urgentcare' then 9203
+    when 'outpatient' then 9202
+    else 0
+  end as VISIT_CONCEPT_ID,
+  av.visit_start_date as VISIT_START_DATE,
+  av.visit_start_date as VISIT_START_DATETIME,
+  av.visit_end_date as VISIT_END_DATE,
+  av.visit_end_date as VISIT_END_DATETIME,
+  44818517 as VISIT_TYPE_CONCEPT_ID,
+  0 as PROVIDER_ID,
+  NULL as CARE_SITE_ID,
+  av.encounter_id as VISIT_SOURCE_VALUE,
+  0 as VISIT_SOURCE_CONCEPT_ID,
+  0 as ADMITTING_SOURCE_CONCEPT_ID,
+  NULL as ADMITTING_SOURCE_VALUE,
+  0 as DISCHARGE_TO_CONCEPT_ID,
+  NULL as DISCHARGE_TO_SOURCE_VALUE,
+  lag(visit_occurrence_id) over(
+    partition by p.person_id
+    order by
+      av.visit_start_date
+  ) as PRECEDING_VISIT_OCCURRENCE_ID
+from
+  live.all_visits av
+  join live.person p on av.patient = p.person_source_value
+where
+  av.visit_occurrence_id in (
+    select
+      distinct visit_occurrence_id_new
+    from
+      live.final_visit_ids
+  );
+
 
 -- COMMAND ----------
 

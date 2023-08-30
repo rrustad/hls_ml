@@ -37,112 +37,164 @@
 
 # COMMAND ----------
 
-# DBTITLE 1,Get the patients and add the 30_DAY_READMISSION label
+# MAGIC %sql
+# MAGIC create schema if not exists dbdemos.hls_ml_features
+
+# COMMAND ----------
+
 from pyspark.sql import Window
-# Let's create our label: we'll predict the  30 days readmission risk
-windowSpec = Window.partitionBy("PATIENT").orderBy("START")
-labels = spark.table('encounters_ml').select("PATIENT", "Id", "START", "STOP") \
-              .withColumn('30_DAY_READMISSION', F.when(col('START').cast('long') - F.lag(col('STOP')).over(windowSpec).cast('long') < 30*24*60*60, 1).otherwise(0))
-display(labels)
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### Join readmission information with patient features
-# MAGIC
-# MAGIC Let's add features describing our patients cohort. 
-# MAGIC
-# MAGIC In this case we're doing some one hot encoding leveraging `get_dummies` from the Pandas API on Spark to transform categories into vector our model will be able to process.
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### Optional: leverage Databricks Feature Store
-# MAGIC
-# MAGIC Being able to save our features in dedicated feature store simplify data management cross teamn, allowing features to be shared but also used in real-time leveraging realtime feature serving (automatically backed by ELTP databases).
-# MAGIC
-# MAGIC To keep this notebook simple, we won't be using the Feature store. If you are interested, open the [03.6-Feature-Store-ML-patient-readmission](/advanced-feature-store/03.6-Feature-Store-ML-patient-readmission) for a complete example.
-
-# COMMAND ----------
-
 import pyspark.pandas as ps
 
-# Define Patient Features logic
-def compute_pat_features(data):
-  data = data.pandas_api()
-  data = ps.get_dummies(data, columns=['MARITAL', 'RACE', 'ETHNICITY', 'GENDER'],dtype = 'int64').to_spark()
-  return data
+from databricks.feature_store import FeatureStoreClient
+
+fs = FeatureStoreClient()
 
 # COMMAND ----------
 
-# DBTITLE 1,Select the cohort we want to analyze
-cohort_name = 'COVID-19-cohort' #or could be all_patients
-cohort = spark.sql(f"SELECT p.* FROM cohort c INNER JOIN patients_ml p on c.patient=p.id WHERE c.name='{cohort_name}'") \
-              .dropDuplicates(["id"])
-cohort_features_df = compute_pat_features(cohort)
-cohort_features_df.display()
+# MAGIC %md
+# MAGIC ### Encounter Features
+# MAGIC TODO: Consider other filters:
+# MAGIC * Patients who do not live in the area of the hospital, or have missing residence info. Patients outside of hospital geography won't readmit to the same hospital
+# MAGIC * Patients who died - dead patients can't readmit
+# MAGIC * Patients who planned a visit in advance
+# MAGIC * Patients who stay in hospital for more than 30 days
+# MAGIC * Narrow down to just conditions that count against CMS Hospital Readmissions Reduction Program Readmission metrics
+# MAGIC   * Acute Myocardial Infarction (AMI)
+# MAGIC   * Chronic Obstructive Pulmonary Disease (COPD)
+# MAGIC   * Heart Failure (HF)
+# MAGIC   * Pneumonia
+# MAGIC   * Coronary Artery Bypass Graft (CABG) Surgery
+# MAGIC   * Elective Primary Total Hip Arthroplasty and/or Total Knee Arthroplasty (THA/TKA)
+# MAGIC TODO: Add more features
+# MAGIC * admit time
+# MAGIC * admit day of week
+# MAGIC * admit week of year
 
 # COMMAND ----------
 
-# DBTITLE 1,Encounter features
-def compute_enc_features(data):
-  data = data.dropDuplicates(["Id"])
-  data = data.withColumn('enc_length', F.unix_timestamp(col('stop'))- F.unix_timestamp(col('start')))
-  data = data.pandas_api()
-#   return data
-  data = ps.get_dummies(data, columns=['ENCOUNTERCLASS'],dtype = 'int64').to_spark()
-  
-  return (
+def calc_encounters_features(data):
+  df = (
     data
-    .select(
-      col('Id').alias('ENCOUNTER_ID'),
-      'BASE_ENCOUNTER_COST',
-      'TOTAL_CLAIM_COST',
-      'PAYER_COVERAGE',
-      'enc_length',
-      'ENCOUNTERCLASS_ambulatory',
-      'ENCOUNTERCLASS_emergency',
-      'ENCOUNTERCLASS_hospice',
-      'ENCOUNTERCLASS_inpatient',
-      'ENCOUNTERCLASS_outpatient',
-      'ENCOUNTERCLASS_wellness',
+    # Filter down to just hospitalizations
+    # Consider other filters in the future, see markdown above
+    .filter(
+      col('ENCOUNTERCLASS').isin([
+        'emergency','inpatient','urgentcare'
+      ])
     )
+    # Find out when the patients last hospital discharge was
+    .withColumn('last_discharge', F.lag(col('STOP')).over(Window.partitionBy("PATIENT").orderBy("START")))
+    # If they don't have a recent discharge, then they are a new patient
+    .withColumn('new_patient', F.when(col('last_discharge').isNull(), 1).otherwise(0))
+    # Calculate if their most recent discharge was within 30 days
+    .withColumn('30_DAY_READMISSION', F.when(col('START').cast('long') - col('last_discharge').cast('long') < 60*60*24*30, 1).otherwise(0))
+    # How many readmissions have they had in the last 6 months?
+    .withColumn('30_DAY_READMISSION_6_months', F.sum(col('30_DAY_READMISSION')).over( 
+                                                          Window.partitionBy("PATIENT").orderBy(col("START").cast("long")).rangeBetween(-60*60*24*180, 0)
+                                                          ))
+    # How many readmissions have they had in the last 12 months?
+    .withColumn('30_DAY_READMISSION_12_months', F.sum(col('30_DAY_READMISSION')).over( 
+                                                          Window.partitionBy("PATIENT").orderBy(col("START").cast("long")).rangeBetween(-60*60*24*365, 0)
+                                                          ))
+    # How many total admissions have they had in the last 6 months?
+    .withColumn('prev_admissions_6_months', F.count(col('START')).over( 
+                                                          Window.partitionBy("PATIENT").orderBy(col("START").cast("long")).rangeBetween(-60*60*24*180, 0)
+                                                          ))
+    # How many total admissions have they had in the last 12 months?
+    .withColumn('prev_admissions_12_months', F.count(col('START')).over( 
+                                                          Window.partitionBy("PATIENT").orderBy(col("START").cast("long")).rangeBetween(-60*60*24*365, 0)
+                                                          ))
+    # 
+
+    # .select('PATIENT', 'START', 'STOP', 'last_discharge','30_DAY_READMISSION', 'prev_admissions_6_months', 'prev_admissions_12_months')
+  ).pandas_api()
+
+  pd_df = ps.get_dummies(df, columns=['ENCOUNTERCLASS'],dtype = 'int64').to_spark()
+
+  final_data = pd_df.select('Id','TOTAL_CLAIM_COST','new_patient','30_DAY_READMISSION_6_months','30_DAY_READMISSION_12_months','prev_admissions_6_months', 'prev_admissions_12_months', 'ENCOUNTERCLASS_emergency', 'ENCOUNTERCLASS_inpatient', 'ENCOUNTERCLASS_urgentcare')
+  
+  return final_data
+
+encounters_features = calc_encounters_features(spark.table('dbdemos.hls_ml_source.encounters'))
+
+# Create feature table with `customer_id` as the primary key.
+# Take schema from DataFrame output by compute_customer_features
+customer_feature_table = fs.create_table(
+  name='dbdemos.hls_ml_features.encounters_features',
+  primary_keys='Id',
+  schema=encounters_features.schema,
+  description='Customer features'
+)
+
+fs.write_table(
+  name='dbdemos.hls_ml_features.encounters_features',
+  df = encounters_features,
+  mode = 'merge'
+)
+
+# COMMAND ----------
+
+# Define Patient Features logic
+def calc_pat_features(data):
+  data = ps.get_dummies(data.pandas_api(), columns=['MARITAL', 'RACE', 'ETHNICITY', 'GENDER'],dtype = 'int64').to_spark()
+  return data.select(
+    'Id',
+    'HEALTHCARE_COVERAGE',
+    'INCOME',
+    'MARITAL_D',
+    'MARITAL_M',
+    'MARITAL_S',
+    'MARITAL_W',
+    'RACE_asian',
+    'RACE_black',
+    'RACE_hawaiian',
+    'RACE_native',
+    'RACE_other',
+    'RACE_white',
+    'ETHNICITY_hispanic',
+    'ETHNICITY_nonhispanic',
+    'GENDER_F',
+    'GENDER_M'
   )
-enc_features_df = compute_enc_features(spark.table('encounters_ml'))
-display(enc_features_df)
+
+patients_features = calc_pat_features(spark.table('dbdemos.hls_ml_source.patients'))
+
+# Create feature table with `customer_id` as the primary key.
+# Take schema from DataFrame output by compute_customer_features
+customer_feature_table = fs.create_table(
+  name='dbdemos.hls_ml_features.patients_features',
+  primary_keys='Id',
+  schema=patients_features.schema,
+  description='Patient features'
+)
+
+fs.write_table(
+  name='dbdemos.hls_ml_features.patients_features',
+  df = patients_features,
+  mode = 'merge'
+)
 
 # COMMAND ----------
 
-enc_features_df = compute_enc_features(spark.table('encounters_ml'))
-training_dataset = cohort_features_df.join(labels, [labels.PATIENT==cohort_features_df.Id], "inner") \
-                                     .join(enc_features_df, [labels.Id==enc_features_df.ENCOUNTER_ID], "inner") \
-                                     .drop("Id", "_rescued_data", "SSN", "DRIVERS", "PASSPORT", "FIRST", "LAST", "ADDRESS", "BIRTHPLACE")
-### Adding extra feature such as patient age at encounter
-training_dataset = training_dataset.withColumnRenamed("PATIENT", "patient_id") \
-                                   .withColumn("age_at_encounter", ((F.datediff(col('START'), col('BIRTHDATE'))) / 365.25))
+def calc_age_at_encounter(encounters, patients):
+  return (
+    encounters
+    .join(patients, patients.Id == encounters.PATIENT)
+    .withColumn("age_at_encounter", ((F.datediff(col('START'), col('BIRTHDATE'))) / 365.25))
+    .select(encounters.Id, 'age_at_encounter')
+    )
 
-training_dataset.write.mode('overwrite').saveAsTable("training_dataset")
-display(spark.table("training_dataset"))
+age_at_encounter = calc_age_at_encounter(spark.table('dbdemos.hls_ml_source.encounters'), spark.table('dbdemos.hls_ml_source.patients'))
 
-# COMMAND ----------
+customer_feature_table = fs.create_table(
+  name='dbdemos.hls_ml_features.age_at_encounter',
+  primary_keys='Id',
+  schema=age_at_encounter.schema,
+  description='What age was the patient when they were admitted. Id in this table coresponds to encounters.Id'
+)
 
-# MAGIC %md
-# MAGIC #### EXTRA: Going further in feature engineering with Databricks Feature store
-# MAGIC
-# MAGIC In this demo, we simply created a table to save our Features. Databricks offers more advanced capabilities through the use of Feature Store including collaboration, discoverabilities and realtime backend.
-# MAGIC
-# MAGIC For more details, open [04.6-EXTRA-Feature-Store-ML-patient-readmission]($./04.6-EXTRA-Feature-Store-ML-patient-readmission).
-# MAGIC
-# MAGIC *If you're starting your Data Science journey with Databricks, we recommend skipping this step and revisiting Databricks Feature Store later.*
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC
-# MAGIC ## Next steps: AutoML
-# MAGIC
-# MAGIC Data processing for data Modeling and Machine learning is simple leveraging the lakehouse. Our features are now saved as a new table or alternatively as Feature Store Tables (see Feature store notebook for more details).
-# MAGIC
-# MAGIC We can now leverage Databricks AutoML to test multiple algorithms and generate the model training notebook including best practices. 
-# MAGIC
-# MAGIC Open [04.2-AutoML-patient-admission-risk]($./04.2-AutoML-patient-admission-risk) to start your AutoML run.
+fs.write_table(
+  name='dbdemos.hls_ml_features.age_at_encounter',
+  df = age_at_encounter,
+  mode = 'merge'
+)

@@ -10,11 +10,20 @@ dbutils.widgets.text('folder', "/dbdemos/hls_ml/synthea", 'data folder')
 
 # COMMAND ----------
 
+# MAGIC %sql
+# MAGIC -- CREATE EXTERNAL LOCATION kp_ml_demo_dev URL 's3://one-env-uc-external-location/kp_ml_demo_dev'
+# MAGIC --      WITH (CREDENTIAL one_env_external_location)
+# MAGIC --      COMMENT 'kp ml demo'
+# MAGIC -- GRANT READ FILES, WRITE FILES, CREATE EXTERNAL TABLE ON EXTERNAL LOCATION `kp_ml_demo_dev` TO `riley.rustad@databricks.com`;
+
+# COMMAND ----------
+
 #This  will download the data from our github repo to accelerate the demo start.
 #Alternatively, you can run [00-generate-synthea-data]($./00-generate-synthea-data) to generate the data yourself with synthea.
 
 reset_all_data = dbutils.widgets.get("reset_all_data") == "true"
 folder = dbutils.widgets.get("folder")
+dbfs_folder = "/dbdemos/hls_ml/synthea"
 import os
 import requests
 import timeit
@@ -23,15 +32,25 @@ import time
 
 folders = ["/landing_zone/encounters", "/landing_zone/patients", "/landing_zone/conditions", "/landing_zone/medications", "/landing_zone/immunizations", "/landing_zone/location_ref", "/landing_vocab/CONCEPT", "/landing_vocab/CONCEPT_RELATIONSHIP"]
                                
-if reset_all_data or any([is_folder_empty(folder+f) for f in folders]):
+if reset_all_data or any([is_folder_empty(dbfs_folder+f) for f in folders]):
   if reset_all_data:
-    assert len(folder) > 5
-    dbutils.fs.rm(folder, True)
+    assert len(dbfs_folder) > 5
+    dbutils.fs.rm(dbfs_folder, True)
   for f in folders:
-      download_file_from_git('/dbfs'+folder+f, "databricks-demos", "dbdemos-dataset", "/hls/synthea"+f.replace("landing_zone", "landing_zone_parquet"))
+      download_file_from_git('/dbfs'+dbfs_folder+f, "databricks-demos", "dbdemos-dataset", "/hls/synthea"+f.replace("landing_zone", "landing_zone_parquet"))
 
 else:
   print("data already existing. Run with reset_all_data=true to force a data cleanup for your local demo.")
+
+# COMMAND ----------
+
+dbutils.fs.ls('dbfs:/dbdemos/hls_ml/synthea')
+
+# COMMAND ----------
+
+if reset_all_data:
+    dbutils.fs.rm(folder, True)
+    dbutils.fs.cp('dbfs:/dbdemos/hls_ml/synthea', folder, True)
 
 # COMMAND ----------
 
@@ -194,15 +213,3 @@ class EndpointApiClient:
         print(r.text)
         r.raise_for_status()
       return r.json()
-
-# COMMAND ----------
-
-landed_path = f'dbfs:{folder}/landing_zone'
-
-# COMMAND ----------
-
-dbutils.fs.ls(landed_path)
-
-# COMMAND ----------
-
-
