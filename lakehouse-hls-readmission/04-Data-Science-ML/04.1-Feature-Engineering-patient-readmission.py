@@ -123,7 +123,7 @@ customer_feature_table = fs.create_table(
   name='dbdemos.hls_ml_features.encounters_features',
   primary_keys='Id',
   schema=encounters_features.schema,
-  description='Customer features'
+  description='Encounter features'
 )
 
 fs.write_table(

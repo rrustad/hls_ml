@@ -3,7 +3,7 @@ dbutils.widgets.dropdown("reset_all_data", "false", ["true", "false"], "Reset al
 reset_all_data = dbutils.widgets.get("reset_all_data") == "true"
 dbutils.widgets.text('catalog', 'dbdemos', 'Catalog')
 dbutils.widgets.text('db', 'hls_ml', 'Database')
-dbutils.widgets.text('folder', "/dbdemos/hls_ml/synthea", 'data folder')
+dbutils.widgets.text('folder', "s3://one-env-uc-external-location/kp_ml_demo_dev", 'data folder')
 folder=dbutils.widgets.get('folder')
 
 landed_path = f"{folder}/landing_zone/"

@@ -1,4 +1,13 @@
 # Databricks notebook source
+retrain_model = dbutils.jobs.taskValues.get(taskKey    = "model_monitor",
+                            key        = "retrain_model",
+                            default    = True,
+                            debugValue = True)
+if not retrain_model:
+  dbutils.notebook.exit()
+
+# COMMAND ----------
+
 import mlflow
 import json
 from mlflow.utils.rest_utils import http_request
@@ -14,10 +23,10 @@ model_path = dbutils.widgets.get('model_path')
 dbutils.widgets.text('model_name', 'hls_ml_demo')
 model_name = dbutils.widgets.get('model_name')
 
-experiment_name = dbutils.jobs.taskValues.get(taskKey= "train_model", 
+experiment_name = dbutils.jobs.taskValues.get(taskKey= "retrain_model", 
                             key        = "experiment_name", 
-                            default    = "/Users/riley.rustad@databricks.com/hls_readmissions_demo_20230823", \
-                            debugValue = "/Users/riley.rustad@databricks.com/hls_readmissions_demo_20230824.1")
+                            default    = "/Users/riley.rustad@databricks.com/hls_readmissions_demo_20230831", \
+                            debugValue = "/Users/riley.rustad@databricks.com/hls_readmissions_demo_20230831")
 
 dbutils.widgets.text('demographic_vars', 'RACE_asian,RACE_black,RACE_hawaiian,RACE_native,RACE_other,RACE_white,ETHNICITY_hispanic,ETHNICITY_nonhispanic,GENDER_F,GENDER_M')
 demographic_vars = dbutils.widgets.get('demographic_vars')

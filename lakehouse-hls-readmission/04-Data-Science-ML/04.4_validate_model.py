@@ -1,4 +1,13 @@
 # Databricks notebook source
+retrain_model = dbutils.jobs.taskValues.get(taskKey    = "model_monitor",
+                            key        = "retrain_model",
+                            default    = True,
+                            debugValue = True)
+if not retrain_model:
+  dbutils.notebook.exit()
+
+# COMMAND ----------
+
 import mlflow
 import pyspark.sql.functions as f
 import pyspark.sql.functions as F
@@ -17,8 +26,8 @@ from mlflow.utils.rest_utils import http_request
 
 experiment_name = dbutils.jobs.taskValues.get(taskKey= "train_model", 
                             key        = "experiment_name", 
-                            default    = "/Users/riley.rustad@databricks.com/hls_readmissions_demo_20230823", \
-                            debugValue = "/Users/riley.rustad@databricks.com/hls_readmissions_demo_20230823")
+                            default    = "/Users/riley.rustad@databricks.com/hls_readmissions_demo_20230831", \
+                            debugValue = "/Users/riley.rustad@databricks.com/hls_readmissions_demo_20230831")
 
 model_version = dbutils.jobs.taskValues.get(taskKey= "train_model", 
                             key        = "model_version", 

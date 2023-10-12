@@ -169,6 +169,10 @@ tables
 
 # COMMAND ----------
 
+# TODO add shap values, and prediction variable importances
+
+# COMMAND ----------
+
 if 'readmissions_predictions' not in tables: 
   # Filter down to just the last 30 days of admissions
   # We don't want predict on our entire history if we don't have to

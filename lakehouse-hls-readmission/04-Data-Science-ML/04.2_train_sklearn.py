@@ -18,7 +18,15 @@ dbName = dbutils.widgets.get('dbName')
 dbutils.widgets.text('max_evals', '50')
 max_evals = int(dbutils.widgets.get('max_evals'))
 
+# COMMAND ----------
 
+retrain_model = dbutils.jobs.taskValues.get(taskKey    = "model_monitor",
+                            key        = "retrain_model",
+                            default    = True,
+                            debugValue = True)
+print(retrain_model)
+if not retrain_model:
+  dbutils.notebook.exit()
 
 # COMMAND ----------
 
