@@ -26,13 +26,13 @@ from mlflow.utils.rest_utils import http_request
 
 experiment_name = dbutils.jobs.taskValues.get(taskKey= "retrain_model", 
                             key        = "experiment_name", 
-                            default    = "/Users/riley.rustad@databricks.com/hls_readmissions_demo_20230831", \
-                            debugValue = "/Users/riley.rustad@databricks.com/hls_readmissions_demo_20230831")
+                            default    = "/Users/riley.rustad@databricks.com/hls_readmissions_demo_20230926", \
+                            debugValue = "/Users/riley.rustad@databricks.com/hls_readmissions_demo_20230926")
 
-model_version = dbutils.jobs.taskValues.get(taskKey= "retrain_model", 
-                            key        = "model_version", 
-                            default    = 1, \
-                            debugValue = 1)
+# model_version = dbutils.jobs.taskValues.get(taskKey= "retrain_model", 
+#                             key        = "model_version", 
+#                             default    = 1, \
+#                             debugValue = 1)
 
 dbutils.widgets.text('model_name', 'hls_ml_demo')
 model_name = dbutils.widgets.get('model_name')
@@ -56,7 +56,7 @@ fs = feature_store.FeatureStoreClient()
 # COMMAND ----------
 
 model_details = client.get_latest_versions(model_name, ['Staging'])[0]
-model_details
+model_version = model_details.version
 
 # COMMAND ----------
 
@@ -110,7 +110,8 @@ from sklearn.metrics import roc_auc_score
 preds = (
   fs.score_batch(f"models:/{model_details.name}/Staging", test)
   # .select('Id', '30_DAY_READMISSION', 'prediction')
-)
+  # choose to cache the dataframe because we use the output many times - keeps the result in memory
+).cache()
 # preds.display()
 
 # COMMAND ----------
