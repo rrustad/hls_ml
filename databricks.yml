@@ -1,44 +1,40 @@
 bundle:
-  name:hls_ml
+  name: hls_ml
 
 resources:
   jobs:
-    hls_ml
+    hls_ml:
       name: hls_ml
-        job_clusters:
-          - job_cluster_key: "Job_cluster"
-            new_cluster:
-              spark_version: 12.2.x-scala2.12
-              node_type_id: Standard_DS3_v2
-              num_workers: 1
-    tasks:
-      - task_key: "load_data"
-        run_if: "ALL_SUCCESS"
-        notebook_task:
-          notebook_path: ./01-load-data.py
-          base_parameters:
-            reset_all_data: false
-            db: hls_ml
-            catalog: dbdemos
-            folder: s3://one-env-uc-external-location/kp_ml_demo_dev
-
-            "source": "WORKSPACE"
-          job_cluster_key: Job_cluster
+      job_clusters:
+        - job_cluster_key: "Job_cluster"
+          new_cluster:
+            spark_version: 12.2.x-scala2.12
+            node_type_id: Standard_DS3_v2
+            num_workers: 1
+      tasks:
+        - task_key: load_data
+          job_cluster_key: "Job_cluster"
+          notebook_task:
+            notebook_path: ./01-load-data.py
 
 environments:
 
   dev:
     workspace:
-      host: https://eastus2.azuredatabricks.net/?o=5206439413157315
-
-
+      host: https://adb-984752964297111.11.azuredatabricks.net
+    resources:
+      jobs:
+        hls_ml:
+          job_clusters:
+          - job_cluster_key: Job_cluster
+            num_workers: 1
 
   prod:
     workspace:
       host: https://adb-984752964297111.11.azuredatabricks.net
     resources:
       jobs:
-        hls_ml
+        hls_ml:
           job_clusters:
-          - job_cluster_key: "Job_cluster"
+          - job_cluster_key: Job_cluster
             num_workers: 4
