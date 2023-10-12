@@ -4,7 +4,7 @@ bundle:
 resources:
   jobs:
     hls_ml:
-      name: hls_ml
+      name: "[${bundle.environment}] hls_ml"
       job_clusters:
         - job_cluster_key: "Job_cluster"
           new_cluster:
