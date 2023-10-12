@@ -20,7 +20,7 @@
 
 # COMMAND ----------
 
-# MAGIC %run ../_resources/00-setup $reset_all_data=false $catalog=dbdemos $db=hls_patient_readmission
+# MAGIC %run ./00-setup $reset_all_data=false $catalog=dbdemos $db=hls_patient_readmission
 
 # COMMAND ----------
 
