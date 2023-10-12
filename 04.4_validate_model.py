@@ -24,12 +24,12 @@ from mlflow.utils.rest_utils import http_request
 
 # COMMAND ----------
 
-experiment_name = dbutils.jobs.taskValues.get(taskKey= "train_model", 
+experiment_name = dbutils.jobs.taskValues.get(taskKey= "retrain_model", 
                             key        = "experiment_name", 
                             default    = "/Users/riley.rustad@databricks.com/hls_readmissions_demo_20230831", \
                             debugValue = "/Users/riley.rustad@databricks.com/hls_readmissions_demo_20230831")
 
-model_version = dbutils.jobs.taskValues.get(taskKey= "train_model", 
+model_version = dbutils.jobs.taskValues.get(taskKey= "retrain_model", 
                             key        = "model_version", 
                             default    = 1, \
                             debugValue = 1)
