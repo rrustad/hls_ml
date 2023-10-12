@@ -16,6 +16,11 @@ resources:
           job_cluster_key: "Job_cluster"
           notebook_task:
             notebook_path: ./01-load-data.py
+            base_parameters:
+              reset_all_data: "false"
+              db: hls_ml
+              catalog: dbdemos
+              folder: s3://one-env-uc-external-location/kp_ml_demo_dev
 
 environments:
 
