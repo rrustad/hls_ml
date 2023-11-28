@@ -26,7 +26,7 @@ retrain_model = dbutils.jobs.taskValues.get(taskKey    = "model_monitor",
                             debugValue = True)
 print(retrain_model)
 if not retrain_model:
-  dbutils.notebook.exit()
+  dbutils.notebook.exit(0)
 
 # COMMAND ----------
 
@@ -282,3 +282,7 @@ best_hyperparams = optimize(
 # COMMAND ----------
 
 dbutils.jobs.taskValues.set(key= "experiment_name",value = experiment_name)
+
+# COMMAND ----------
+
+

@@ -4,7 +4,7 @@ retrain_model = dbutils.jobs.taskValues.get(taskKey    = "model_monitor",
                             default    = True,
                             debugValue = True)
 if not retrain_model:
-  dbutils.notebook.exit()
+  dbutils.notebook.exit(0)
 
 # COMMAND ----------
 
@@ -57,6 +57,7 @@ fs = feature_store.FeatureStoreClient()
 
 model_details = client.get_latest_versions(model_name, ['Staging'])[0]
 model_version = model_details.version
+model_version
 
 # COMMAND ----------
 
