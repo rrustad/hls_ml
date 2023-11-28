@@ -4,7 +4,7 @@ retrain_model = dbutils.jobs.taskValues.get(taskKey    = "model_monitor",
                             default    = True,
                             debugValue = True)
 if not retrain_model:
-  dbutils.notebook.exit()
+  dbutils.notebook.exit(0)
 
 # COMMAND ----------
 
@@ -25,8 +25,8 @@ model_name = dbutils.widgets.get('model_name')
 
 experiment_name = dbutils.jobs.taskValues.get(taskKey= "retrain_model", 
                             key        = "experiment_name", 
-                            default    = "/Users/riley.rustad@databricks.com/hls_readmissions_demo_20230831", \
-                            debugValue = "/Users/riley.rustad@databricks.com/hls_readmissions_demo_20230831")
+                            default    = "/Users/riley.rustad@databricks.com/hls_readmissions_demo_20230926", \
+                            debugValue = "/Users/riley.rustad@databricks.com/hls_readmissions_demo_20230926")
 
 dbutils.widgets.text('demographic_vars', 'RACE_asian,RACE_black,RACE_hawaiian,RACE_native,RACE_other,RACE_white,ETHNICITY_hispanic,ETHNICITY_nonhispanic,GENDER_F,GENDER_M')
 demographic_vars = dbutils.widgets.get('demographic_vars')

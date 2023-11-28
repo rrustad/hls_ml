@@ -4,11 +4,11 @@ bundle:
 resources:
   jobs:
     hls_ml:
-      name: hls_ml
+      name: "[${bundle.environment}] hls_ml"
       job_clusters:
         - job_cluster_key: "Job_cluster"
           new_cluster:
-            spark_version: 12.2.x-scala2.12
+            spark_version: 13.3.x-cpu-ml-scala2.12
             node_type_id: Standard_DS3_v2
             num_workers: 1
       tasks:
@@ -16,6 +16,11 @@ resources:
           job_cluster_key: "Job_cluster"
           notebook_task:
             notebook_path: ./01-load-data.py
+            base_parameters:
+              reset_all_data: "false"
+              db: hls_ml
+              catalog: dbdemos
+              folder: abfss://kp-ml-demo-dev@oneenvadls.dfs.core.windows.net/hls_ml
 
 environments:
 

@@ -5,8 +5,8 @@ on:
     branches: [ "dev" ]
 
 env:
-  DATABRICKS_HOST: ${{secrets.DATABRICKS_HOST_DEV}}
-  DATABRICKS_TOKEN: ${{secrets.DATABRICKS_TOKEN_DEV}}
+  DATABRICKS_HOST: ${{secrets.DATABRICKS_HOST_PROD}}
+  DATABRICKS_TOKEN: ${{secrets.DATABRICKS_TOKEN_PROD}}
 
 jobs:
 
