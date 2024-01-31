@@ -25,8 +25,8 @@ model_name = dbutils.widgets.get('model_name')
 
 experiment_name = dbutils.jobs.taskValues.get(taskKey= "retrain_model", 
                             key        = "experiment_name", 
-                            default    = "/Users/riley.rustad@databricks.com/hls_readmissions_demo_20230831", \
-                            debugValue = "/Users/riley.rustad@databricks.com/hls_readmissions_demo_20230831")
+                            default    = "/Users/riley.rustad@databricks.com/hls_readmissions_demo_20240125", \
+                            debugValue = "/Users/riley.rustad@databricks.com/hls_readmissions_demo_20240125")
 
 dbutils.widgets.text('demographic_vars', 'RACE_asian,RACE_black,RACE_hawaiian,RACE_native,RACE_other,RACE_white,ETHNICITY_hispanic,ETHNICITY_nonhispanic,GENDER_F,GENDER_M')
 demographic_vars = dbutils.widgets.get('demographic_vars')
@@ -34,6 +34,10 @@ demographic_vars = dbutils.widgets.get('demographic_vars')
 # COMMAND ----------
 
 experiment_name
+
+# COMMAND ----------
+
+mlflow.set_registry_uri("databricks-uc")
 
 # COMMAND ----------
 
@@ -62,7 +66,7 @@ best_run_id = mlflow.search_runs(
   order_by=["metrics.val_auc DESC"], 
   max_results=1, 
   #
-  filter_string="status = 'FINISHED' and metrics.diff <.02"
+  filter_string="status = 'FINISHED'"
   ).iloc[0]['run_id']
 
 best_run_id
@@ -109,44 +113,17 @@ client.update_model_version(
 
 # COMMAND ----------
 
-host_creds = client._tracking_client.store.get_host_creds()
-host = host_creds.host
-token = host_creds.token
-
-def mlflow_call_endpoint(endpoint, method, body='{}'):
-  if method == 'GET':
-      response = http_request(
-          host_creds=host_creds, endpoint="/api/2.0/mlflow/{}".format(endpoint), method=method, params=json.loads(body))
-  else:
-      response = http_request(
-          host_creds=host_creds, endpoint="/api/2.0/mlflow/{}".format(endpoint), method=method, json=json.loads(body))
-  return response.json()
-
-def transition(model_name, version, stage):
-  
-  staging_request = {'name': model_name,
-                     'version': version,
-                     'stage': stage,
-                     'archive_existing_versions': 'true'}
-  response = mlflow_call_endpoint('model-versions/transition-stage', 'POST', json.dumps(staging_request))
-  return(response)
+client.set_registered_model_alias(model_name, "staged", model_details.version)
 
 # COMMAND ----------
 
-transition(model_name = model_name, version = model_details.version, stage = "Staging")
+model_details.version
 
 # COMMAND ----------
 
-client.set_tag(model_details.run_id, key='demographic_vars', value=demographic_vars)
+client.set_model_version_tag(model_name, model_details.version, "demographic_vars", demographic_vars)
 
-# COMMAND ----------
-
-model_details.version, 
 
 # COMMAND ----------
 
 dbutils.jobs.taskValues.set(key= "model_version",value = model_details.version)
-
-# COMMAND ----------
-
-

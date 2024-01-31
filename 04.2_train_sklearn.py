@@ -1,6 +1,5 @@
 # Databricks notebook source
-from databricks.feature_store import FeatureLookup
-from databricks import feature_store
+from databricks.feature_engineering import FeatureEngineeringClient, FeatureLookup
 import mlflow
 import pyspark.sql.functions as F
 import pyspark.sql.functions as f
@@ -12,11 +11,18 @@ from datetime import datetime, timedelta
 
 # COMMAND ----------
 
-dbutils.widgets.text('dbName', 'dbdemos.hls_ml_features')
-dbName = dbutils.widgets.get('dbName')
+dbutils.widgets.text('source_schema', 'hls_ingest.clarity')
+source_schema = dbutils.widgets.get('source_schema')
+
+dbutils.widgets.text('features_schema', 'kp_catalog.hls_ml')
+features_schema = dbutils.widgets.get('features_schema')
 
 dbutils.widgets.text('max_evals', '50')
 max_evals = int(dbutils.widgets.get('max_evals'))
+
+# Select the number of months of training history that you want to pull
+dbutils.widgets.text('training_months_history', '24')
+training_months_history = int(dbutils.widgets.get('training_months_history'))
 
 # COMMAND ----------
 
@@ -35,7 +41,7 @@ if not retrain_model:
 
 # COMMAND ----------
 
-encounters = spark.table('dbdemos.hls_ml_source.encounters')
+encounters = spark.table(f'{source_schema}.encounters')
 
 max_enc_date = encounters.select(f.max(f.col('START'))).collect()[0][0]
 print(max_enc_date)
@@ -46,9 +52,9 @@ data = (
   encounters
   
   # We can't definitively say if anyone from the last 30 days has readmitted
-  .filter(col('START') < f.lit(datetime.strptime(max_enc_date, '%Y-%m-%dT%H:%M:%SZ') - timedelta(days=30)))
+  .filter(col('START') < f.lit(max_enc_date - timedelta(days=30)))
   # Limit training data to the last 3 years
-  .filter(col('START') > f.lit(datetime.strptime(max_enc_date, '%Y-%m-%dT%H:%M:%SZ') - timedelta(days=365*3)))
+  .filter(col('START') > f.lit(max_enc_date - timedelta(days=365*3)))
   # We're only interested in hospitalizations - see 4.1 for ideas on additional cohort filters
   .filter(col('ENCOUNTERCLASS').isin(['emergency','inpatient','urgentcare']))
   # Calculate the target variable
@@ -72,15 +78,16 @@ data = (
 training_data = (
   data
   # We can't definitively say if anyone from the last 30 days has readmitted
-  .filter(col('START') < f.lit(datetime.strptime(max_enc_date, '%Y-%m-%dT%H:%M:%SZ') - timedelta(days=90)))
+  .filter(col('START') < f.lit(max_enc_date - timedelta(days=90)))
+  .filter(col('START') > f.lit(max_enc_date - timedelta(days=training_months_history*30) - timedelta(days=90)))
   .drop('START')
 )
 
 validation_data = (
   data
   # We can't definitively say if anyone from the last 30 days has readmitted
-  .filter(col('START') < f.lit(datetime.strptime(max_enc_date, '%Y-%m-%dT%H:%M:%SZ') - timedelta(days=60)))
-  .filter(col('START') > f.lit(datetime.strptime(max_enc_date, '%Y-%m-%dT%H:%M:%SZ') - timedelta(days=90)))
+  .filter(col('START') < f.lit(max_enc_date - timedelta(days=60)))
+  .filter(col('START') > f.lit(max_enc_date - timedelta(days=90)))
   .drop('START')
 )
 
@@ -92,9 +99,9 @@ validation_data = (
 # COMMAND ----------
 
 
-patient_features_table = f'{dbName}.patients_features'
-encounter_features_table = f'{dbName}.encounters_features'
-age_at_enc_features_table = f'{dbName}.age_at_encounter'
+patient_features_table = f'{features_schema}.pat_features'
+encounter_features_table = f'{features_schema}.enc_features'
+age_at_enc_features_table = f'{features_schema}.age_at_encounter'
  
 patient_feature_lookups = [
    FeatureLookup( 
@@ -153,9 +160,9 @@ age_at_enc_feature_lookups = [
 
 # COMMAND ----------
 
-fs = feature_store.FeatureStoreClient()
-training_set = fs.create_training_set(
-  training_data,
+fe = FeatureEngineeringClient()
+training_set = fe.create_training_set(
+  df = training_data,
   feature_lookups = patient_feature_lookups + encounter_feature_lookups + age_at_enc_feature_lookups,
   label = "30_DAY_READMISSION",
   exclude_columns = ["Id", "PATIENT", 'STOP', 'START']
@@ -163,8 +170,8 @@ training_set = fs.create_training_set(
 
 train = training_set.load_df().toPandas()
 
-validation_set = fs.create_training_set(
-  validation_data,
+validation_set = fe.create_training_set(
+  df = validation_data,
   feature_lookups = patient_feature_lookups + encounter_feature_lookups + age_at_enc_feature_lookups,
   label = "30_DAY_READMISSION",
   exclude_columns = ["Id", "PATIENT", 'STOP', 'START']
@@ -214,6 +221,9 @@ from hyperopt import STATUS_OK, Trials, fmin, hp, tpe, SparkTrials
 import mlflow.sklearn
 from sklearn.metrics import roc_auc_score
 
+# mlflow.sklearn.autolog(log_models=False)
+mlflow.autolog(disable=True)
+
 def optimize(
              #trials, 
              max_evals,
@@ -260,12 +270,12 @@ def score(params):
     mlflow.log_metric('diff', train_score - score)
     
 #     mlflow.sklearn.log_model(model, 'model')
-    fs.log_model(
-      model,
+    fe.log_model(
+      model=model,
       artifact_path="model",
       flavor=mlflow.sklearn,
       training_set=training_set,
-#       registered_model_name="taxi_example_fare_packaged"
+      # registered_model_name="kp_catalog.hls_ml.readmissions"
     )
   
     loss = 1 - score
@@ -275,10 +285,14 @@ def score(params):
 # COMMAND ----------
 
 best_hyperparams = optimize(
-                            #trials,
+                            # trials = SparkTrials(),
                             max_evals
                             )
 
 # COMMAND ----------
 
 dbutils.jobs.taskValues.set(key= "experiment_name",value = experiment_name)
+
+# COMMAND ----------
+
+

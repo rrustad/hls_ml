@@ -12,22 +12,17 @@ import mlflow
 import pyspark.sql.functions as f
 import pyspark.sql.functions as F
 from pyspark.sql.functions import col
-from databricks import feature_store
+from databricks.feature_engineering import FeatureEngineeringClient, FeatureLookup
 from pyspark.sql import Window
 from datetime import datetime, timedelta
 import json
-from mlflow.utils.rest_utils import http_request
-
-# COMMAND ----------
-
-
 
 # COMMAND ----------
 
 experiment_name = dbutils.jobs.taskValues.get(taskKey= "retrain_model", 
                             key        = "experiment_name", 
-                            default    = "/Users/riley.rustad@databricks.com/hls_readmissions_demo_20230926", \
-                            debugValue = "/Users/riley.rustad@databricks.com/hls_readmissions_demo_20230926")
+                            default    = "/Users/riley.rustad@databricks.com/hls_readmissions_demo_20240125", \
+                            debugValue = "/Users/riley.rustad@databricks.com/hls_readmissions_demo_20240125")
 
 # model_version = dbutils.jobs.taskValues.get(taskKey= "retrain_model", 
 #                             key        = "model_version", 
@@ -37,16 +32,26 @@ experiment_name = dbutils.jobs.taskValues.get(taskKey= "retrain_model",
 dbutils.widgets.text('model_name', 'hls_ml_demo')
 model_name = dbutils.widgets.get('model_name')
 
+dbutils.widgets.text('source_schema', 'hls_ingest.clarity')
+source_schema = dbutils.widgets.get('source_schema')
+
+dbutils.widgets.text('feature_schema', 'kp_catalog.hls_ml')
+feature_schema = dbutils.widgets.get('feature_schema')
+
 dbutils.widgets.text('accuracy_threshold', '.6')
 accuracy_threshold = float(dbutils.widgets.get('accuracy_threshold'))
 
 dbutils.widgets.text('demographic_accuracy_threshold', '.5')
 demographic_accuracy_threshold = float(dbutils.widgets.get('demographic_accuracy_threshold'))
 
+dbutils.widgets.text('demographic_vars', 'RACE_asian,RACE_black,RACE_hawaiian,RACE_native,RACE_other,RACE_white,ETHNICITY_hispanic,ETHNICITY_nonhispanic,GENDER_F,GENDER_M')
+demographic_vars = dbutils.widgets.get('demographic_vars')
+
 # COMMAND ----------
 
+mlflow.set_registry_uri('databricks-uc')
 client = mlflow.tracking.MlflowClient()
-fs = feature_store.FeatureStoreClient()
+fe = FeatureEngineeringClient()
 
 # COMMAND ----------
 
@@ -55,7 +60,8 @@ fs = feature_store.FeatureStoreClient()
 
 # COMMAND ----------
 
-model_details = client.get_latest_versions(model_name, ['Staging'])[0]
+model_details = client.get_model_version_by_alias(model_name, "staged")
+
 model_version = model_details.version
 
 # COMMAND ----------
@@ -65,7 +71,7 @@ model_version = model_details.version
 
 # COMMAND ----------
 
-encounters = spark.table('dbdemos.hls_ml_source.encounters')
+encounters = spark.table(f'{source_schema}.encounters')
 
 max_enc_date = encounters.select(f.max(f.col('START'))).collect()[0][0]
 print(max_enc_date)
@@ -76,9 +82,9 @@ test = (
   encounters
   
   # We can't definitively say if anyone from the last 30 days has readmitted
-  .filter(col('START') < f.lit(datetime.strptime(max_enc_date, '%Y-%m-%dT%H:%M:%SZ') - timedelta(days=30)))
+  .filter(col('START') < f.lit(max_enc_date - timedelta(days=30)))
   # Limit training data to the last 3 years
-  .filter(col('START') > f.lit(datetime.strptime(max_enc_date, '%Y-%m-%dT%H:%M:%SZ') - timedelta(days=60)))
+  .filter(col('START') > f.lit(max_enc_date - timedelta(days=60)))
   # We're only interested in hospitalizations - see 4.1 for ideas on additional cohort filters
   .filter(col('ENCOUNTERCLASS').isin(['emergency','inpatient','urgentcare']))
   # Calculate the target variable
@@ -108,7 +114,7 @@ from sklearn.metrics import roc_auc_score
 # COMMAND ----------
 
 preds = (
-  fs.score_batch(f"models:/{model_details.name}/Staging", test)
+  fe.score_batch(model_uri=f"models:/{model_details.name}@staged", df=test)
   # .select('Id', '30_DAY_READMISSION', 'prediction')
   # choose to cache the dataframe because we use the output many times - keeps the result in memory
 ).cache()
@@ -124,6 +130,7 @@ accuracy
 
 # COMMAND ----------
 
+# True positive rate
 sensitivity = (
   preds
   .filter(col('30_DAY_READMISSION') == 1)
@@ -133,6 +140,7 @@ sensitivity
 
 # COMMAND ----------
 
+# True Negative Rate
 specificity = (
   preds
   .filter(col('30_DAY_READMISSION') == 0)
@@ -142,7 +150,8 @@ specificity
 
 # COMMAND ----------
 
-
+# MAGIC %md
+# MAGIC So the model is 
 
 # COMMAND ----------
 
@@ -161,20 +170,20 @@ else:
 
 # COMMAND ----------
 
-run_info = client.get_run(run_id=model_details.run_id)
-demographic_vars = run_info.data.tags['demographic_vars'].split(",")
-demographic_vars
+demographic_vars_ = demographic_vars.split(",")
+# demographic_vars
 
 # COMMAND ----------
 
 try:
-  for demographic_var in demographic_vars:
-    print(demographic_var)
+  for demographic_var in demographic_vars_:
+    
     demo_accuracy = (
       preds
       .filter(col(demographic_var) == 1)
       .select(f.mean(f.when(col('30_DAY_READMISSION') == col('prediction'), 1).otherwise(0)))
     ).collect()[0][0]
+    print(demographic_var, demo_accuracy)
     client.set_tag(model_details.run_id, key=demographic_var, value=demo_accuracy)
     client.set_model_version_tag(name=model_details.name, version=model_details.version, key=demographic_var, value=demo_accuracy > demographic_accuracy_threshold)
 
@@ -276,10 +285,11 @@ def transition(model_name, version, stage):
 
 # Optional: you can also break model promotion to PROD into it's own separate notebook
 if all_true:
-  transition(model_name = model_name, version = model_details.version, stage = "Production")
+  client.set_registered_model_alias(model_name, "production", model_details.version)
+  client.delete_registered_model_alias(model_name, "staged")
 else:
   print('Model did not qualify for production')
-  transition(model_name = model_name, version = model_details.version, stage = "Archived")
+  client.delete_registered_model_alias(model_name, "staged")
 
 # COMMAND ----------
 

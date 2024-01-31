@@ -2,20 +2,20 @@
 import mlflow
 import pyspark.sql.functions as f
 from pyspark.sql.functions import col
-from databricks import feature_store
+from databricks.feature_engineering import FeatureEngineeringClient, FeatureLookup
 from datetime import datetime, timedelta
 from pyspark.sql import Window
 
 # COMMAND ----------
 
-dbutils.widgets.text('model_name', 'hls_ml_demo')
+dbutils.widgets.text('model_name', 'kp_catalog.hls_ml.readmissions_risk')
 model_name = dbutils.widgets.get('model_name')
 
-dbutils.widgets.text('source_dbName', 'dbdemos.hls_ml_source')
-source_dbName = dbutils.widgets.get('source_dbName')
+dbutils.widgets.text('source_schema', 'hls_ingest.clarity')
+source_schema = dbutils.widgets.get('source_schema')
 
-dbutils.widgets.text('target_dbName', 'dbdemos.hls_ml_readmissions')
-target_dbName = dbutils.widgets.get('target_dbName')
+dbutils.widgets.text('target_schema', 'kp_catalog.hls_ml')
+target_schema = dbutils.widgets.get('target_schema')
 
 dbutils.widgets.text('retrain_threshold', '.59')
 retrain_threshold = float(dbutils.widgets.get('retrain_threshold'))
@@ -26,7 +26,7 @@ external_location = dbutils.widgets.get('external_location')
 # COMMAND ----------
 
 client = mlflow.tracking.MlflowClient()
-fs = feature_store.FeatureStoreClient()
+fe = FeatureEngineeringClient()
 
 # COMMAND ----------
 
@@ -35,11 +35,11 @@ fs = feature_store.FeatureStoreClient()
 
 # COMMAND ----------
 
-predictions = spark.table(f"{target_dbName}.readmission_predictions")
+predictions = spark.table(f"{target_schema}.readmissions_predictions")
 
 # COMMAND ----------
 
-encounters = spark.table('dbdemos.hls_ml_source.encounters')
+encounters = spark.table(f'{source_schema}.encounters')
 
 max_enc_date = encounters.select(f.max(f.col('START'))).collect()[0][0]
 
@@ -48,7 +48,7 @@ windowSpec = Window.partitionBy("PATIENT").orderBy("START")
 outcomes = (
   encounters
   # We can't definitively say if anyone from the last 30 days has readmitted in 30 days
-  .filter(col('START') < f.lit(datetime.strptime(max_enc_date, '%Y-%m-%dT%H:%M:%SZ') - timedelta(days=30)))
+  .filter(col('START') < f.lit(max_enc_date - timedelta(days=30)))
   # Calculate the target variable
   .withColumn('last_discharge', f.lag(col('STOP')).over(Window.partitionBy("PATIENT").orderBy("START")))
   # Calculate if their most recent discharge was within 30 days
@@ -68,18 +68,18 @@ compare = (
   .write
   .mode('overwrite')
   .option("mergeSchema", "true")
-  .saveAsTable(f"{target_dbName}.readmission_prediction_outcomes")
+  .saveAsTable(f"{target_schema}.readmission_prediction_outcomes")
 )
 
 
 # COMMAND ----------
 
-spark.table(f"{target_dbName}.readmission_prediction_outcomes").display()
+spark.table(f"{target_schema}.readmission_prediction_outcomes").display()
 
 # COMMAND ----------
 
 (
-  spark.table(f"{target_dbName}.readmission_prediction_outcomes")
+  spark.table(f"{target_schema}.readmission_prediction_outcomes")
   .groupBy(f.date_trunc('dd','START').alias('start_date'))
   .agg(f.mean('correct'),f.count('correct'))
   .withColumn('theshold', f.lit(.55))
@@ -88,7 +88,7 @@ spark.table(f"{target_dbName}.readmission_prediction_outcomes").display()
 # COMMAND ----------
 
 retrain_model = (
-  spark.table(f"{target_dbName}.readmission_prediction_outcomes")
+  spark.table(f"{target_schema}.readmission_prediction_outcomes")
   .groupBy(f.date_trunc('dd','START').alias('start_date'))
   .agg(f.mean('correct').alias('daily_accuracy'))
   .select(f.min('daily_accuracy') < retrain_threshold)

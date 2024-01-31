@@ -2,27 +2,28 @@
 import mlflow
 import pyspark.sql.functions as f
 from pyspark.sql.functions import col
-from databricks import feature_store
+from databricks.feature_engineering import FeatureEngineeringClient, FeatureLookup
 from datetime import datetime, timedelta
 
 # COMMAND ----------
 
-dbutils.widgets.text('model_name', 'hls_ml_demo')
+dbutils.widgets.text('model_name', 'kp_catalog.hls_ml.readmissions_risk')
 model_name = dbutils.widgets.get('model_name')
 
-dbutils.widgets.text('source_dbName', 'dbdemos.hls_ml_source')
-source_dbName = dbutils.widgets.get('source_dbName')
+dbutils.widgets.text('source_schema', 'hls_ingest.clarity')
+source_schema = dbutils.widgets.get('source_schema')
 
-dbutils.widgets.text('target_dbName', 'dbdemos.hls_ml_readmissions')
-target_dbName = dbutils.widgets.get('target_dbName')
+dbutils.widgets.text('target_schema', 'kp_catalog.hls_ml')
+target_schema = dbutils.widgets.get('target_schema')
 
-dbutils.widgets.text('external_location', 's3://one-env-uc-external-location/kp_ml_demo_dev/target/')
+dbutils.widgets.text('external_location', 'abfss://kp-external-location@oneenvadls.dfs.core.windows.net/hls_ml')
 external_location = dbutils.widgets.get('external_location')
 
 # COMMAND ----------
 
+mlflow.set_registry_uri('databricks-uc')
 client = mlflow.tracking.MlflowClient()
-fs = feature_store.FeatureStoreClient()
+fe = FeatureEngineeringClient()
 
 # COMMAND ----------
 
@@ -31,7 +32,7 @@ fs = feature_store.FeatureStoreClient()
 
 # COMMAND ----------
 
-model_details = client.get_latest_versions(model_name, ['Production'])[0]
+model_details = client.get_model_version_by_alias(model_name, "production")
 model_details
 
 # COMMAND ----------
@@ -41,7 +42,7 @@ model_details
 
 # COMMAND ----------
 
-df = spark.readStream.format('delta').table(f'{source_dbName}.encounters').filter(
+df = spark.readStream.format('delta').table(f'{source_schema}.encounters').filter(
       col('ENCOUNTERCLASS').isin([
         'emergency','inpatient','urgentcare'
       ]))
@@ -59,14 +60,15 @@ df = spark.readStream.format('delta').table(f'{source_dbName}.encounters').filte
 
 # COMMAND ----------
 
-spark.sql(f"create schema if not exists {target_dbName}")
+spark.sql(f"create schema if not exists {target_schema}")
 
 # COMMAND ----------
 
 #TODO parameterize
+catalog, schema = target_schema.split('.')
 tables = (
-  spark.table('dbdemos.information_schema.tables')
-  .filter(col('table_schema') == 'hls_ml_readmissions')
+  spark.table(f'{catalog}.information_schema.tables')
+  .filter(col('table_schema') == schema)
   .select('table_name')
 ).collect()
 tables = [table['table_name'] for table in tables]
@@ -173,53 +175,79 @@ tables
 
 # COMMAND ----------
 
-if 'readmissions_predictions' not in tables: 
-  # Filter down to just the last 30 days of admissions
-  # We don't want predict on our entire history if we don't have to
-  # We also don't want to make predictions on data we used for training, validation, or testing
-
-  encounters = spark.table(f'{source_dbName}.encounters')
+  encounters = spark.table(f'{source_schema}.encounters')
 
   max_enc_date = encounters.select(f.max(f.col('START'))).collect()[0][0]
 
-  df = df.filter(col('START') > f.lit(datetime.strptime(max_enc_date, '%Y-%m-%dT%H:%M:%SZ') - timedelta(days=30)))
+  df = encounters.filter(col('STOP').isNull()).filter(col('ENCOUNTERCLASS').isin(['emergency','inpatient','urgentcare']))
 
   preds = (
-    fs.score_batch(f"models:/{model_name}/Production", df)
+    fe.score_batch(model_uri=f"models:/{model_name}@production", df=df)
     .select('Id', 'prediction')
-    .withColumn('prediction_date', f.date_trunc('dd',f.lit(datetime.strptime(max_enc_date, '%Y-%m-%dT%H:%M:%SZ'))))
+    .withColumn('prediction_date', f.date_trunc('dd',f.lit(max_enc_date)))
     .withColumn('model_version', f.lit(model_details.version))
-    .writeStream
-    .format("delta")
-    .outputMode("append")
-    .option("checkpointLocation", f'{external_location}/checkpoints/readmissions_predictions')
-    .trigger(once=True)
-    .toTable(f"{target_dbName}.readmission_predictions", path=f'{external_location}/readmissions_predictions')
-    .awaitTermination()
-  )
-else: 
-  preds = (
-    fs.score_batch(f"models:/{model_name}/Production", df)
-    .select('Id', 'prediction')
-    .withColumn('prediction_date', f.date_trunc('dd',f.lit(datetime.strptime(max_enc_date, '%Y-%m-%dT%H:%M:%SZ'))))
-    .withColumn('model_version', f.lit(model_details.version))
-    .writeStream
-    .format("delta")
-    .outputMode("append")
-    .option("checkpointLocation", f'{external_location}/checkpoints/readmissions_predictions')
-    .trigger(once=True)
-    .toTable(f"{target_dbName}.readmission_predictions", path=f'{external_location}/readmissions_predictions')
-    .awaitTermination()
+    .write
+    .mode('append')
+    .saveAsTable(f'{target_schema}.readmissions_predictions')
+    # .writeStream
+    # .format("delta")
+    # .outputMode("append")
+    # .option("checkpointLocation", f'{external_location}/checkpoints/readmissions_predictions')
+    # .trigger(once=True)
+    # .toTable(f"{target_schema}.readmission_predictions", path=f'{external_location}/readmissions_predictions')
+    # .awaitTermination()
   )
 
 # COMMAND ----------
 
-display(spark.table(f"{target_dbName}.readmission_predictions"))
+# if 'readmissions_predictions' not in tables: 
+#   # Filter down to just the last 30 days of admissions
+#   # We don't want predict on our entire history if we don't have to
+#   # We also don't want to make predictions on data we used for training, validation, or testing
+
+#   encounters = spark.table(f'{source_schema}.encounters')
+
+#   max_enc_date = encounters.select(f.max(f.col('START'))).collect()[0][0]
+
+#   df = encounters.filter(col('STOP').isNull()).filter(col('ENCOUNTERCLASS').isin(['emergency','inpatient','urgentcare']))
+
+#   preds = (
+#     fe.score_batch(model_uri=f"models:/{model_name}@production", df=df)
+#     .select('Id', 'prediction')
+#     .withColumn('prediction_date', f.date_trunc('dd',f.lit(max_enc_date)))
+#     .withColumn('model_version', f.lit(model_details.version))
+#     .write
+#     .mode('append')
+#     .saveAsTable(f'{target_schema}.readmissions_predictions')
+#     # .writeStream
+#     # .format("delta")
+#     # .outputMode("append")
+#     # .option("checkpointLocation", f'{external_location}/checkpoints/readmissions_predictions')
+#     # .trigger(once=True)
+#     # .toTable(f"{target_schema}.readmission_predictions", path=f'{external_location}/readmissions_predictions')
+#     # .awaitTermination()
+#   )
+# else: 
+#   preds = (
+#     fe.score_batch(model_uri=f"models:/{model_name}@production", df=df)
+#     .select('Id', 'prediction')
+#     .withColumn('prediction_date', f.date_trunc('dd',f.lit(max_enc_date)))
+#     .withColumn('model_version', f.lit(model_details.version))
+#     .write
+#     .mode('append')
+#     .saveAsTable(f'{target_schema}.readmissions_predictions')
+#     # .writeStream
+#     # .format("delta")
+#     # .outputMode("append")
+#     # .option("checkpointLocation", f'{external_location}/checkpoints/readmissions_predictions')
+#     # .trigger(once=True)
+#     # .toTable(f"{target_schema}.readmission_predictions", path=f'{external_location}/readmissions_predictions')
+#     # .awaitTermination()
+#   )
 
 # COMMAND ----------
 
-# MAGIC %sql
-# MAGIC describe history dbdemos.hls_ml_readmissions.readmission_predictions
+display(spark.table(f'{target_schema}.readmissions_predictions'))
 
 # COMMAND ----------
 
