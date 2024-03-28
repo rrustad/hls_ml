@@ -8,6 +8,7 @@
 
 # COMMAND ----------
 
+
 dbutils.widgets.dropdown("reset_all_data", "false", ["true", "false"], "Reset all data")
 dbutils.widgets.text("min_dbr_version", "9.1", "Min required DBR version")
 #Empty value will try default: dbdemos with a fallback to hive_metastore
