@@ -1,10 +1,10 @@
 # Databricks notebook source
-# retrain_model = dbutils.jobs.taskValues.get(taskKey    = "model_monitor",
-#                             key        = "retrain_model",
-#                             default    = True,
-#                             debugValue = True)
-# if not retrain_model:
-#   dbutils.notebook.exit()
+retrain_model = dbutils.jobs.taskValues.get(taskKey    = "model_monitor",
+                            key        = "retrain_model",
+                            default    = True,
+                            debugValue = True)
+if not retrain_model:
+  dbutils.notebook.exit()
 
 # COMMAND ----------
 
@@ -24,17 +24,19 @@ dbutils.widgets.text('model_name', 'hls_ml_demo')
 model_name = dbutils.widgets.get('model_name')
 catalog,schema,model = model_name.split('.')
 
-experiment_name = dbutils.jobs.taskValues.get(taskKey= "train_model", 
+# COMMAND ----------
+
+experiment_name = dbutils.jobs.taskValues.get(taskKey= "retrain_model", 
                             key        = "experiment_name", 
-                            default    = "/Users/riley.rustad@databricks.com/risk_model1_20220824", \
-                            debugValue = f"/Users/riley.rustad@databricks.com/{model}_20220824")
+                            default    = "/Users/riley.rustad@databricks.com/hls_readmissions_demo_20240822", \
+                            debugValue = f"/Users/riley.rustad@databricks.com/{model}_20240824")
 
 dbutils.widgets.text('demographic_vars', 'RACE_asian,RACE_black,RACE_hawaiian,RACE_native,RACE_other,RACE_white,ETHNICITY_hispanic,ETHNICITY_nonhispanic,GENDER_F,GENDER_M')
 demographic_vars = dbutils.widgets.get('demographic_vars')
 
 # COMMAND ----------
 
-experiment_name
+experiment_name = '/Users/riley.rustad@databricks.com/risk_model3_20220824'
 
 # COMMAND ----------
 
@@ -74,7 +76,7 @@ best_run_id
 
 # COMMAND ----------
 
-# best_run_id = "0550a6ed9e9d4bc4aaa904a2f7805410"
+best_run_id = '8d458e50bc424f2eb3894929927142f3'
 
 # COMMAND ----------
 
@@ -132,6 +134,11 @@ client.set_model_version_tag(model_name, model_details.version, "demographic_var
 # COMMAND ----------
 
 dbutils.jobs.taskValues.set(key= "model_version",value = model_details.version)
+
+# COMMAND ----------
+
+model_version_uri = "models:/kp_catalog.hls_ml.risk_model4@staged"
+mlflow.models.add_libraries_to_model(model_version_uri)
 
 # COMMAND ----------
 

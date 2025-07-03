@@ -14,11 +14,14 @@ from datetime import datetime, timedelta
 dbutils.widgets.text('source_schema', 'hls_ingest.clarity')
 source_schema = dbutils.widgets.get('source_schema')
 
-dbutils.widgets.text('features_schema', 'kp_catalog.hls_ml')
-features_schema = dbutils.widgets.get('features_schema')
+dbutils.widgets.text('target_schema', 'kp_catalog.hls_ml')
+target_schema = dbutils.widgets.get('target_schema')
 
 dbutils.widgets.text('max_evals', '50')
 max_evals = int(dbutils.widgets.get('max_evals'))
+
+dbutils.widgets.text('model_name', 'hls_ml_demo')
+model_name = dbutils.widgets.get('model_name')
 
 # Select the number of months of training history that you want to pull
 dbutils.widgets.text('training_months_history', '24')
@@ -26,13 +29,13 @@ training_months_history = int(dbutils.widgets.get('training_months_history'))
 
 # COMMAND ----------
 
-retrain_model = dbutils.jobs.taskValues.get(taskKey    = "model_monitor",
-                            key        = "retrain_model",
-                            default    = True,
-                            debugValue = True)
-print(retrain_model)
-if not retrain_model:
-  dbutils.notebook.exit()
+# retrain_model = dbutils.jobs.taskValues.get(taskKey    = "model_monitor",
+#                             key        = "retrain_model",
+#                             default    = True,
+#                             debugValue = True)
+# print(retrain_model)
+# if not retrain_model:
+#   dbutils.notebook.exit()
 
 # COMMAND ----------
 
@@ -99,9 +102,9 @@ validation_data = (
 # COMMAND ----------
 
 
-patient_features_table = f'{features_schema}.pat_features'
-encounter_features_table = f'{features_schema}.enc_features'
-age_at_enc_features_table = f'{features_schema}.age_at_encounter'
+patient_features_table = f'{target_schema}.pat_features'
+encounter_features_table = f'{target_schema}.enc_features'
+age_at_enc_features_table = f'{target_schema}.age_at_encounter'
  
 patient_feature_lookups = [
    FeatureLookup( 
@@ -194,10 +197,25 @@ train#[train.isna()]
 
 # COMMAND ----------
 
+demo_date = spark.sql(f"select max(start) from {source_schema}.encounters").collect()[0][0]
+demo_date
+
+# COMMAND ----------
+
+# from datetime import datetime
+# demo_date = datetime.today()
+# demo_date
+
+# COMMAND ----------
+
 #TODO: what is the prod location for an experiment
-experiment_name = f"/Users/riley.rustad@databricks.com/hls_readmissions_demo_{datetime.today().strftime('%Y%m%d')}"
+experiment_name = f"/Users/riley.rustad@databricks.com/{model_name}_{demo_date.strftime('%Y%m%d')}"
 mlflow.set_experiment(experiment_name)
 target_col = "30_DAY_READMISSION"
+
+# COMMAND ----------
+
+experiment_name
 
 # COMMAND ----------
 

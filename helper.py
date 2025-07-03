@@ -16,6 +16,10 @@ r
 
 # COMMAND ----------
 
+r.json()
+
+# COMMAND ----------
+
 
 'runs' in requests.get(url + f'/api/2.1/jobs/runs/list?job_id={job_id}&active_only=true', headers=_token).json().keys()
 

@@ -156,6 +156,10 @@ patients_features = calc_pat_features(patients)
 
 # COMMAND ----------
 
+patients
+
+# COMMAND ----------
+
 enc_features_table = fe.create_table(
   name=f'{target_schema}.pat_features',
   primary_keys='Id',

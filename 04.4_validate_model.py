@@ -1,10 +1,10 @@
 # Databricks notebook source
-retrain_model = dbutils.jobs.taskValues.get(taskKey    = "model_monitor",
-                            key        = "retrain_model",
-                            default    = True,
-                            debugValue = True)
-if not retrain_model:
-  dbutils.notebook.exit()
+# retrain_model = dbutils.jobs.taskValues.get(taskKey    = "model_monitor",
+#                             key        = "retrain_model",
+#                             default    = True,
+#                             debugValue = True)
+# if not retrain_model:
+#   dbutils.notebook.exit()
 
 # COMMAND ----------
 
@@ -19,10 +19,10 @@ import json
 
 # COMMAND ----------
 
-experiment_name = dbutils.jobs.taskValues.get(taskKey= "retrain_model", 
+experiment_name = dbutils.jobs.taskValues.get(taskKey= "train_model", 
                             key        = "experiment_name", 
-                            default    = "/Users/riley.rustad@databricks.com/hls_readmissions_demo_20240125", \
-                            debugValue = "/Users/riley.rustad@databricks.com/hls_readmissions_demo_20240125")
+                            default    = "/Users/riley.rustad@databricks.com/risk_model1_20220824", \
+                            debugValue = "/Users/riley.rustad@databricks.com/risk_model1_20220824")
 
 # model_version = dbutils.jobs.taskValues.get(taskKey= "retrain_model", 
 #                             key        = "model_version", 
@@ -287,9 +287,23 @@ def transition(model_name, version, stage):
 if all_true:
   client.set_registered_model_alias(model_name, "production", model_details.version)
   client.delete_registered_model_alias(model_name, "staged")
+
+  # Give the model framework the needed info
+  catalog, schema, model = model_details.name.split('.')
+  #TODO: come back and automate all the manual tagging
+  client.set_model_version_tag(name=model_details.name, version=model_details.version, key="inference_table", value=f"kp_catalog.hls_ml.{model}_predictions")
+  client.set_model_version_tag(name=model_details.name, version=model_details.version, key="outcomes_table", value=f"kp_catalog.hls_ml.{model}_outcomes")
 else:
   print('Model did not qualify for production')
   client.delete_registered_model_alias(model_name, "staged")
+
+# COMMAND ----------
+
+model_details.name, model_details.version
+
+# COMMAND ----------
+
+model_details
 
 # COMMAND ----------
 
