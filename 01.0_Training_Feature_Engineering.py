@@ -1,9 +1,11 @@
 # Databricks notebook source
 from pyspark.sql.functions import col
 from pyspark.sql.window import Window
-from databricks.feature_engineering import FeatureEngineeringClient
 import pyspark.sql.functions as f
 import pyspark.pandas as ps
+from pyspark.sql.functions import pandas_udf
+from sklearn.preprocessing import OneHotEncoder
+import pandas as pd
 
 # COMMAND ----------
 
@@ -41,58 +43,95 @@ spark.sql(f"CREATE SCHEMA IF NOT EXISTS {target_schema}")
 
 # COMMAND ----------
 
-fe = FeatureEngineeringClient()
+admissions = spark.table(f'{source_schema}.admissions')
 
 # COMMAND ----------
 
-encounters = spark.table(f'{source_schema}.encounters')
-
-# COMMAND ----------
-
-# No need to figure out what all these things do - mostly we're just creating the Target Variable 30_DAY_READMISSION
-# As well as creating some encounter based features
-def calc_encounters_features(data):
-  df = (
-    data
-    # Filter down to just hospitalizations
-    # Consider other filters in the future, see markdown above
-    .filter(
-      col('ENCOUNTERCLASS').isin([
-        'emergency','inpatient','urgentcare'
-      ])
-    )
+from pyspark.sql import functions as f
+from pyspark.sql.window import Window
+from pyspark.sql import Column
+w = Window.partitionBy("subject_id").orderBy("admittime")
+df = (
+    admissions
     # Find out when the patients last hospital discharge was
-    .withColumn('last_discharge', f.lag(col('STOP')).over(Window.partitionBy("PATIENT").orderBy("START")))
+    .withColumn('last_discharge', f.lag(f.col('dischtime')).over(w))
     # If they don't have a recent discharge, then they are a new patient
-    .withColumn('new_patient', f.when(col('last_discharge').isNull(), 1).otherwise(0))
+    .withColumn('new_patient', f.when(f.col('last_discharge').isNull(), 1).otherwise(0))
     # Calculate if their most recent discharge was within 30 days
-    .withColumn('30_DAY_READMISSION', f.when(col('START').cast('long') - col('last_discharge').cast('long') < 60*60*24*30, 1).otherwise(0))
+    .withColumn('IS_A_READMISSION', f.when(
+        f.col('last_discharge') > f.date_trunc('dd', f.col('admittime')) - f.expr('INTERVAL 30 DAYS'), 1
+    ).otherwise(0))
+    
+    .withColumn('30_DAY_READMISSION', f.lead('IS_A_READMISSION').over(w))
+    .select(
+      'subject_id',
+      'admittime',
+      'dischtime',
+      'last_discharge',
+      'new_patient',
+      'IS_A_READMISSION',
+      '30_DAY_READMISSION'
+    )
+    .orderBy(['subject_id','admittime'])
+    )
+df.display()
+
+# COMMAND ----------
+
+from pyspark.sql import functions as f
+from pyspark.sql.window import Window
+from pyspark.sql import Column
+
+w = Window.partitionBy("subject_id").orderBy("admittime")
+
+enc_features = (
+    admissions
+    # Find out when the patients last hospital discharge was
+    .withColumn('last_discharge', f.lag(f.col('dischtime')).over(w))
+    # If they don't have a recent discharge, then they are a new patient
+    .withColumn('new_patient', f.when(f.col('last_discharge').isNull(), 1).otherwise(0))
+    # Calculate if their most recent discharge was within 30 days
+    .withColumn('IS_A_READMISSION', f.when(
+        f.col('last_discharge') > f.date_trunc('dd', f.col('admittime')) - f.expr('INTERVAL 30 DAYS'), 1
+    ).otherwise(0))
+    # Our target variable is predicting that the NEXT admission will be a readmission
+    .withColumn('30_DAY_READMISSION', f.coalesce(f.lead('IS_A_READMISSION').over(w),f.lit(0)))
     # How many readmissions have they had in the last 6 months?
-    .withColumn('30_DAY_READMISSION_6_months', f.sum(col('30_DAY_READMISSION')).over( 
-                                                          Window.partitionBy("PATIENT").orderBy(col("START").cast("long")).rangeBetween(-60*60*24*180, 0)
+    .withColumn('30_DAY_READMISSION_6_months', f.sum(col('IS_A_READMISSION')).over( 
+                                                          Window.partitionBy("subject_id").orderBy(col("admittime").cast("long")).rangeBetween(-60*60*24*180, 0)
                                                           ))
     # How many readmissions have they had in the last 12 months?
-    .withColumn('30_DAY_READMISSION_12_months', f.sum(col('30_DAY_READMISSION')).over( 
-                                                          Window.partitionBy("PATIENT").orderBy(col("START").cast("long")).rangeBetween(-60*60*24*365, 0)
+    .withColumn('30_DAY_READMISSION_12_months', f.sum(col('IS_A_READMISSION')).over( 
+                                                          Window.partitionBy("subject_id").orderBy(col("admittime").cast("long")).rangeBetween(-60*60*24*365, 0)
                                                           ))
     # How many total admissions have they had in the last 6 months?
-    .withColumn('prev_admissions_6_months', f.count(col('START')).over( 
-                                                          Window.partitionBy("PATIENT").orderBy(col("START").cast("long")).rangeBetween(-60*60*24*180, 0)
+    .withColumn('prev_admissions_6_months', f.count(col('admittime')).over( 
+                                                          Window.partitionBy("subject_id").orderBy(col("admittime").cast("long")).rangeBetween(-60*60*24*180, 0)
                                                           ))
     # How many total admissions have they had in the last 12 months?
-    .withColumn('prev_admissions_12_months', f.count(col('START')).over( 
-                                                          Window.partitionBy("PATIENT").orderBy(col("START").cast("long")).rangeBetween(-60*60*24*365, 0)
+    .withColumn('prev_admissions_12_months', f.count(col('admittime')).over( 
+                                                          Window.partitionBy("subject_id").orderBy(col("admittime").cast("long")).rangeBetween(-60*60*24*365, 0)
                                                           ))
-    # 
+    
+    .drop('last_discharge','IS_A_READMISSION'])
 
-    # .select('PATIENT', 'START', 'STOP', 'last_discharge','30_DAY_READMISSION', 'prev_admissions_6_months', 'prev_admissions_12_months')
-  ).pandas_api()
+)
 
-  pd_df = ps.get_dummies(df, columns=['ENCOUNTERCLASS'],dtype = 'int64').to_spark()
+# COMMAND ----------
 
-  final_data = pd_df.select('Id','TOTAL_CLAIM_COST','new_patient','30_DAY_READMISSION_6_months','30_DAY_READMISSION_12_months','prev_admissions_6_months', 'prev_admissions_12_months', 'ENCOUNTERCLASS_emergency', 'ENCOUNTERCLASS_inpatient', 'ENCOUNTERCLASS_urgentcare')
-  
-  return final_data
+# If we were using spark ML, we'd use the built in one-hot encoder, but we're setting up data for an sklearn model. SKlearn onehot encoder only learns the distributed parition of data that it can see and therefore misses some classes sometimes. 
+cat_cols = ['admission_type','admission_location','discharge_location','insurance','language','marital_status','race']
+for cat_col in cat_cols:
+    categories = [ (row[cat_col] if row[cat_col] is not None else "None").lower().replace(' ', '_').replace('.', '') for row in enc_features.select(cat_col).distinct().collect()]
+
+    # Create one-hot encoded columns for each category
+    for category in categories:
+        enc_features = enc_features.withColumn("cat_col"+"_"+category, f.when(col(cat_col) == category, 1).otherwise(0))
+
+
+# COMMAND ----------
+
+df.display()
 
 # COMMAND ----------
 
