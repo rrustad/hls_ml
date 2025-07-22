@@ -1,11 +1,12 @@
 # Databricks notebook source
-from pyspark.sql.functions import col
-from pyspark.sql.window import Window
-import pyspark.sql.functions as f
-import pyspark.pandas as ps
-from pyspark.sql.functions import pandas_udf
-from sklearn.preprocessing import OneHotEncoder
-import pandas as pd
+import dlt
+# from pyspark.sql.functions import col
+# from pyspark.sql.window import Window
+# import pyspark.sql.functions as f
+# import pyspark.pandas as ps
+# from pyspark.sql.functions import pandas_udf
+# from sklearn.preprocessing import OneHotEncoder
+# import pandas as pd
 
 # COMMAND ----------
 
@@ -30,21 +31,12 @@ import pandas as pd
 
 # COMMAND ----------
 
-# parameterize your source and target data because you pull from different named resources in different environments
-dbutils.widgets.text('source_schema', 'kp_catalog.mimic_incr')
-source_schema = dbutils.widgets.get('source_schema')
-
-dbutils.widgets.text('target_schema', 'kp_catalog.hls_ml')
-target_schema = dbutils.widgets.get('target_schema')
+source_schema = dlt.pipeline_config.get("source_schema", "kp_catalog.mimic_incr")
+target_schema = dlt.pipeline_config.get("target_schema", "kp_catalog.hls_ml")
 
 # COMMAND ----------
 
-spark.sql(f"CREATE SCHEMA IF NOT EXISTS {target_schema}")
-spark.sql(f"CREATE VOLUME IF NOT EXISTS {target_schema}.streaming_checkpoints")
 
-# COMMAND ----------
-
-# spark.sql(f"drop SCHEMA {target_schema} cascade")
 
 # COMMAND ----------
 
@@ -121,19 +113,6 @@ adm_features = (
     
     .drop('last_discharge')
 )
-
-# COMMAND ----------
-
-spark.table(f'{source_schema}.admissions').select('marital_status').distinct().collect()
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC
-
-# COMMAND ----------
-
-
 
 # COMMAND ----------
 
@@ -314,10 +293,6 @@ _pat = (
 #   df = age_at_encounter,
 #   mode = 'merge'
 # )
-
-# COMMAND ----------
-
-spark.table("kp_catalog.mimic_incr.patients").display()
 
 # COMMAND ----------
 

@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 
 # COMMAND ----------
 
-dbutils.widgets.text('source_schema', 'hls_ingest.clarity')
+dbutils.widgets.text('source_schema', 'kp_catalog.mimic_incr')
 source_schema = dbutils.widgets.get('source_schema')
 
 dbutils.widgets.text('target_schema', 'kp_catalog.hls_ml')
