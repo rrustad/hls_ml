@@ -16,7 +16,6 @@ from databricks.feature_engineering import FeatureEngineeringClient, FeatureLook
 from pyspark.sql import Window
 from datetime import datetime, timedelta
 import json
-from sklearn.metrics import roc_auc_score
 
 # COMMAND ----------
 
@@ -111,6 +110,10 @@ test = (
 
 # COMMAND ----------
 
+from sklearn.metrics import roc_auc_score
+
+# COMMAND ----------
+
 # Using score batch to get FE to do our feature look ups for us
 preds = (
   fe.score_batch(model_uri=f"models:/{model_details.name}@staged", df=test)
@@ -125,6 +128,99 @@ mlflow.set_experiment(experiment_name)
 # COMMAND ----------
 
 pd_preds =preds.toPandas()
+
+# COMMAND ----------
+
+pd_preds_prepped = pd_preds[['hadm_id','subject_id', 
+      #      'admittime', 'dischtime', 'deathtime',
+      #  'admission_type', 'admit_provider_id', 'admission_location',
+      #  'discharge_location', 'insurance', 'language', 'marital_status', 'race',
+      #  'edregtime', 'edouttime', 'hospital_expire_flag', 
+      #  'last_discharge',
+       'gender_f',
+       'gender_m', 'admission_type_direct_observation',
+       'admission_type_eu_observation', 'admission_type_ew_emer',
+       'admission_type_elective', 'admission_type_surgical_same_day_admission',
+       'admission_type_observation_admit',
+       'admission_type_ambulatory_observation', 'admission_type_direct_emer',
+       'admission_type_urgent',
+       'admission_location_internal_transfer_to_or_from_psych',
+       'admission_location_procedure_site',
+       'admission_location_emergency_room',
+       'admission_location_physician_referral',
+       'admission_location_transfer_from_skilled_nursing_facility',
+       'admission_location_walk_in_self_referral',
+       'admission_location_clinic_referral', 'admission_location_pacu',
+       'admission_location_transfer_from_hospital',
+       'admission_location_information_not_available',
+       'admission_location_ambulatory_surgery_transfer', 'insurance_private',
+       'insurance_other', 'insurance_medicaid', 'insurance_no_charge',
+       'insurance_medicare', 'insurance_none', 'marital_status_widowed',
+       'marital_status_single', 'marital_status_married',
+       'marital_status_divorced', 'marital_status_none', 'age_at_admission',
+       'new_patient', 'IS_A_READMISSION', '30_DAY_READMISSION', 
+        
+       '30_DAY_READMISSION_6_months', '30_DAY_READMISSION_12_months',
+       'prev_admissions_6_months', 'prev_admissions_12_months', 
+      #  'prediction'
+       ]]
+
+# COMMAND ----------
+
+model = mlflow.pyfunc.load_model(f"models:/{model_details.name}@staged")
+
+# COMMAND ----------
+
+preds = model.predict(pd_preds_prepped)
+preds['prediction'].unique()
+
+# COMMAND ----------
+
+
+
+# COMMAND ----------
+
+preds.select('30_DAY_READMISSION').distinct().display()
+
+# COMMAND ----------
+
+preds.select('prediction').distinct().display()
+
+# COMMAND ----------
+
+preds.schema
+
+# COMMAND ----------
+
+preds.count()
+
+# COMMAND ----------
+
+import mlflow
+
+model_uri = 'models:/kp_catalog.hls_ml.hls_ml_demo/1'
+model = mlflow.pyfunc.load_model(model_uri)
+
+# Predict on a Pandas DataFrame.
+import pandas as pd
+loaded_model.predict(pd.DataFrame(data))
+
+# COMMAND ----------
+
+model.metadata.flavors#["python_function"]["loader_module"]
+
+# COMMAND ----------
+
+mlflow.models.evaluate()
+
+# COMMAND ----------
+
+from mlflow.models.evaluation.evaluators.classifier import _extract_predict_fn_and_prodict_proba_fn
+_extract_predict_fn_and_prodict_proba_fn(model)
+
+# COMMAND ----------
+
+model.predict_proba()
 
 # COMMAND ----------
 
@@ -148,10 +244,37 @@ result.metrics
 
 # COMMAND ----------
 
-accuracy_score = result.metrics['accuracy_score']
-recall_score = result.metrics['recall_score']
-precision_score = result.metrics['precision_score']
-f1_score = result.metrics['f1_score']
+print(f"Accuracy: {result.metrics['accuracy_score']:.3f}")
+print(f"F1 Score: {result.metrics['f1_score']:.3f}")
+print(f"ROC AUC: {result.metrics['roc_auc']:.3f}")
+
+# COMMAND ----------
+
+accuracy = (
+  preds
+  .select(f.mean(f.when(col('30_DAY_READMISSION') == col('prediction'), 1).otherwise(0)))
+).collect()[0][0]
+accuracy
+
+# COMMAND ----------
+
+# True positive rate
+sensitivity = (
+  preds
+  .filter(col('30_DAY_READMISSION') == 1)
+  .select(f.mean(f.when(col('30_DAY_READMISSION') == col('prediction'), 1).otherwise(0)))
+).collect()[0][0]
+sensitivity
+
+# COMMAND ----------
+
+# True Negative Rate
+specificity = (
+  preds
+  .filter(col('30_DAY_READMISSION') == 0)
+  .select(f.mean(f.when(col('30_DAY_READMISSION') == col('prediction'), 1).otherwise(0)))
+).collect()[0][0]
+specificity
 
 # COMMAND ----------
 
@@ -160,14 +283,9 @@ f1_score = result.metrics['f1_score']
 
 # COMMAND ----------
 
-{f"test_{key}":value for key, value in result.metrics.items() if 'score' in key}
-
-# COMMAND ----------
-
 #TODO: make the model use predict_proba and calculate model AUC instead (better measure for binary classifier)
-if accuracy_score > accuracy_threshold:
-  client.set_logged_model_tags(model_details.model_id, tags={f"test_{key}":value for key, value in result.metrics.items() if 'score' in key})
-                               
+if accuracy > accuracy_threshold:
+  client.set_tag(model_details.run_id, key='test_accuracy', value=accuracy)
   client.set_model_version_tag(name=model_details.name, version=model_details.version, key="meets_accuracy_threshold", value=True)
 else:
   print("Model does not meet mandatory accuracy threshold")
@@ -180,31 +298,13 @@ else:
 
 # COMMAND ----------
 
-import json
-# demographic_vars = json.loads(model_details.tags['demographic_vars'])
-demographic_vars = {"kp_catalog.mimic_incr.patients.gender":"subject_id","kp_catalog.mimic_incr.admissions.race":"hadm_id"}
-
-# COMMAND ----------
-
-for var, pk in demographic_vars.items():
-  catalog, schema, table, _col = var.split('.')
-  print(f"{catalog}.{schema}.{table}")
-  var_table = spark.table(f"{catalog}.{schema}.{table}").select(pk, _col)
-
-  values = var_table.select(_col).distinct().collect()
-  print(values)
-
-  # (pred
-  #   .join(table, pk)
-  # )
-
+demographic_vars_ = demographic_vars.split(",")
+# demographic_vars
 
 # COMMAND ----------
 
 try:
   for demographic_var in demographic_vars_:
-
-    preds.select()
     
     demo_accuracy = (
       preds

@@ -36,7 +36,7 @@ target_schema = dlt.pipeline_config.get("target_schema", "kp_catalog.hls_ml")
 
 # COMMAND ----------
 
-
+# spark.sql(f'drop schema kp_catalog.hls_ml cascade')
 
 # COMMAND ----------
 
@@ -93,7 +93,7 @@ adm_features = (
         f.col('last_discharge') > f.date_trunc('dd', f.col('admittime')) - f.expr('INTERVAL 30 DAYS'), 1
     ).otherwise(0))
     # Our target variable is predicting that the NEXT admission will be a readmission
-    .withColumn('30_DAY_READMISSION', f.coalesce(f.lead('IS_A_READMISSION').over(w),f.lit(0)))
+    .withColumn('30_DAY_READMISSION', f.coalesce(f.lead('IS_A_READMISSION').over(w),f.lit(0)).cast('double'))
     # How many 30 day readmissions have they had in the last 6 months, including current admission?
     .withColumn('30_DAY_READMISSION_6_months', f.sum(col('IS_A_READMISSION')).over( 
                                                           Window.partitionBy("subject_id").orderBy(col("admittime").cast("long")).rangeBetween(-60*60*24*180, 0)
